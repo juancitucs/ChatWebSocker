@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Chat Distribuido</title>
+  <style>
+    body{margin:0;font-family:Arial,Helvetica,sans-serif;background:#111;color:#eee}
+    .hidden{display:none}
+    header{background:#222;padding:10px 20px;display:flex;justify-content:space-between;align-items:center}
+    header h1{margin:0;font-size:1.2rem}
+    button,input{padding:6px;font-size:1rem;border:none;border-radius:4px}
+    button{background:#0066cc;color:#fff;cursor:pointer}
+    button:hover{background:#005bb5}
+    input{background:#222;border:1px solid #444;color:#eee}
+    #main{display:flex;height:calc(100vh - 60px)}
+    #sidebar{width:250px;border-right:1px solid #333;padding:10px;overflow-y:auto}
+    #rooms li{padding:8px;border:1px solid #444;margin-bottom:4px;cursor:pointer;border-radius:4px}
+    #rooms li:hover{background:#222}
+    #chat{flex:1;display:flex;flex-direction:column;padding:10px}
+    #messages{flex:1;overflow-y:auto;padding:8px;background:#000;border:1px solid #444;border-radius:4px;display:flex;flex-direction:column;gap:6px}
+    .msg-wrap{display:flex;flex-direction:column;max-width:100%}
+    .mine{align-items:flex-end}.other{align-items:flex-start}
+    .bubble{max-width:70%;padding:6px 8px;border-radius:6px;word-wrap:break-word}
+    .mine .bubble{background:#0066cc}.other .bubble{background:#444}
+    .name{font-size:.7rem;color:#bbb;margin-top:2px}.mine .name{text-align:right}
+    #messages img{max-height:150px;border-radius:4px}
+    #composer{display:flex;gap:6px;margin-top:8px}
+    #composer input[type=text]{flex:1}
+    #login-card,#register-card{max-width:300px;margin:80px auto;padding:20px;border:1px solid #444;background:#222;border-radius:6px}
+    #login-card h2,#register-card h2{text-align:center;margin:0 0 10px}
+    #login-card input,#register-card input{width:100%;margin-bottom:10px}
+    a{color:#4aaaff;cursor:pointer}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Chat Distribuido</h1>
+    <button id="btn-logout" class="hidden">Cerrar Sesión</button>
+  </header>
+
+  <!-- LOGIN -->
+  <div id="login-card">
+    <h2>Iniciar Sesión</h2>
+    <input id="login-user" placeholder="Usuario" />
+    <input id="login-pass" type="password" placeholder="Contraseña" />
+    <button id="btn-login">Entrar</button>
+    <p style="margin-top:8px;text-align:center">¿No tienes cuenta? <a id="link-register">Regístrate</a></p>
+    <div id="login-error" style="color:#f44;text-align:center"></div>
+  </div>
+
+  <!-- REGISTER -->
+  <div id="register-card" class="hidden">
+    <h2>Crear Cuenta</h2>
+    <input id="reg-user" placeholder="Usuario" />
+    <input id="reg-pass" type="password" placeholder="Contraseña" />
+    <button id="btn-register">Registrar</button>
+    <p style="margin-top:8px;text-align:center">¿Ya tienes cuenta? <a id="link-login">Iniciar sesión</a></p>
+    <div id="reg-error" style="color:#f44;text-align:center"></div>
+  </div>
+
+  <!-- APP -->
+  <div id="app" class="hidden">
+    <div id="main">
+      <aside id="sidebar">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <span>Salas</span><button id="btn-new-room" style="padding:2px 6px">＋</button>
+        </div>
+        <ul id="rooms"></ul>
+      </aside>
+      <section id="chat" class="hidden">
+        <h2 id="room-title" style="margin:4px 0 8px"></h2>
+        <div id="messages"></div>
+        <div id="composer">
+          <input id="msg-input" placeholder="Escribe un mensaje..." />
+          <button id="btn-upload">📎</button>
+          <button id="btn-send">Enviar</button>
+          <input id="file-input" type="file" class="hidden" />
+        </div>
+      </section>
+    </div>
+  </div>
+
+<script>
+const API = 'http://192.168.122.102:8000';
+const STORAGE = 'http://192.168.122.106:9000/chat/';
+let token='', user='', room=''; let pollRooms, pollMsgs, participantCount=0;
+const $ = id => document.getElementById(id);
+// obtener nombre de archivo desde URL
+const getFileName = url => decodeURIComponent(url.split('/').pop());
+
+// Panel toggles
+$('link-register').onclick = () => { $('login-card').classList.add('hidden'); $('register-card').classList.remove('hidden'); };
+$('link-login').onclick    = () => { $('register-card').classList.add('hidden'); $('login-card').classList.remove('hidden'); };
+
+// Register
+$('btn-register').onclick = async () => {
+  const u = $('reg-user').value.trim(), p = $('reg-pass').value.trim();
+  if (!u || !p) return;
+  let r = await fetch(API + '/api/register', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p})});
+  if (r.ok) { $('login-user').value = u; $('login-pass').value = p; $('link-login').click(); }
+  else $('reg-error').textContent = 'Usuario ya existe';
+};
+
+// Login
+$('btn-login').onclick = async () => {
+  const u = $('login-user').value.trim(), p = $('login-pass').value.trim();
+  if (!u || !p) return;
+  let r = await fetch(API + '/api/login', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p})});
+  if (!r.ok) { $('login-error').textContent = 'Credenciales inválidas'; return; }
+  token = (await r.json()).token; user = u; localStorage.setItem('chat_jwt', token); enterApp();
+};
+
+// Auto-login
+window.addEventListener('DOMContentLoaded', () => { const saved = localStorage.getItem('chat_jwt'); if (saved) { token = saved; try { user = JSON.parse(atob(saved.split('.')[1])).sub; } catch{} enterApp(); }});
+
+function enterApp() {
+  $('login-card').classList.add('hidden');
+  $('register-card').classList.add('hidden');
+  $('app').classList.remove('hidden');
+  $('btn-logout').classList.remove('hidden');
+  loadRooms(); pollRooms = setInterval(loadRooms, 3000);
+}
+$('btn-logout').onclick = () => { localStorage.removeItem('chat_jwt'); location.reload(); };
+
+async function loadRooms() {
+  let r = await fetch(API + '/api/rooms', {headers:{Authorization:'Bearer '+token}});
+  let rooms = await r.json(); $('rooms').innerHTML = '';
+  rooms.forEach(s => {
+    let li = document.createElement('li');
+    let label = s.id.split('-').filter(n=>n!==user).join(',');
+    li.textContent = label||s.id;
+    li.onclick = () => openRoom(s.id, label);
+    $('rooms').appendChild(li);
+  });
+}
+
+$('btn-new-room').onclick = () => {
+  const names = prompt('Participantes separados por coma'); if (!names) return;
+  let parts = [...new Set(names.split(',').map(s=>s.trim()).filter(Boolean))];
+  if (!parts.includes(user)) parts.push(user);
+  const id = parts.sort().join('-');
+  fetch(API + '/api/room', {method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},body:JSON.stringify({id,participants:parts})}).then(loadRooms).catch(()=>alert('No se pudo crear'));
+};
+
+function openRoom(id,label) {
+  room = id; participantCount = id.split('-').length;
+  $('room-title').textContent = label;
+  $('chat').classList.remove('hidden');
+  fetchMsgs(); clearInterval(pollMsgs); pollMsgs = setInterval(fetchMsgs, 800);
+}
+
+async function fetchMsgs() {
+  if (!room) return;
+  let r = await fetch(`${API}/api/history/${room}?limit=200`, {headers:{Authorization:'Bearer '+token}});
+  if (!r.ok) return;
+  let arr = await r.json();
+  $('messages').innerHTML = '';
+  arr.reverse().forEach(renderMsg);
+}
+
+function renderMsg(m) {
+  const wrap = document.createElement('div'); wrap.classList.add('msg-wrap', m.from===user?'mine':'other');
+  const bubble = document.createElement('div'); bubble.classList.add('bubble');
+  if (m.content.startsWith(STORAGE) && /\.(png|jpe?g|gif)$/i.test(m.content)) {
+    const img = new Image(); img.src = m.content; bubble.appendChild(img);
+  } else if (m.content.startsWith(STORAGE)) {
+    const a = document.createElement('a'); a.href = m.content;
+    a.textContent = getFileName(m.content);
+    a.target = '_blank'; bubble.appendChild(a);
+  } else {
+    bubble.textContent = m.content;
+  }
+  wrap.appendChild(bubble);
+  if (participantCount>2) {
+    const name = document.createElement('span'); name.className='name';
+    name.textContent = m.from===user?'Tú':m.from;
+    wrap.appendChild(name);
+  }
+  $('messages').appendChild(wrap);
+  $('messages').scrollTop = $('messages').scrollHeight;
+}
+
+$('btn-send').onclick = async () => { const txt = $('msg-input').value.trim(); if (!txt) return; $('msg-input').value = ''; await postMsg(txt); };
+$('msg-input').addEventListener('keyup', e=>{ if (e.key==='Enter') $('btn-send').click(); });
+
+$('btn-upload').onclick = () => $('file-input').click();
+$('file-input').onchange = async e => {
+  const f = e.target.files[0]; if (!f) return;
+  const fd = new FormData(); fd.append('f', f);
+  let up = await fetch(API + '/api/upload', {method:'POST',headers:{Authorization:'Bearer '+token},body:fd});
+  if (!up.ok) return alert('Error al subir');
+  const {url} = await up.json(); await postMsg(url);
+};
+
+async function postMsg(content) {
+  await fetch(API+'/api/send',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},body:JSON.stringify({room,content})});
+  fetchMsgs();
+}
+</script>
+</body>
+</html>
