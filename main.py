@@ -37,7 +37,7 @@ app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],        # o limita a ["http://192.168.122.102:8000"]
+    allow_origins=["*"],      
     allow_credentials=True,
     allow_methods=["*"],        # GET, POST, OPTIONS, etc.
     allow_headers=["*"],        # Authorization, Content-Type…
@@ -317,12 +317,12 @@ async def websocket_chat(ws: WebSocket, room: str):
         # Ejecuta 'feed.next()' en un hilo para que no bloquee el loop
         return await loop.run_in_executor(
             FEED_EXECUTOR,
-            feed.next                                  # <- llamada bloqueante
+            feed.next                              
         )
 
     try:
         while True:
-            change = await next_change()               # 🔹 vuelve al loop cuando haya dato
+            change = await next_change()               
             new = change.get("new_val")
             if not new:
                 continue
